@@ -22,38 +22,40 @@ def memoize(f):
     return memodict().__getitem__
 
 
-def surroundings(position):
-    return surroundings_tuple(tuple(position))
+# def surroundings(position):
+#     return surroundings_tuple(tuple(position))
 
 @memoize
-def surroundings_tuple(position):
-    cells = [[position[0] + 1, position[1]],
-             [position[0], position[1] + 1],
-             [position[0] - 1, position[1]],
-             [position[0], position[1] - 1]]
+def surroundings(position):
+    cells = [(position[0] + 1, position[1]),
+             (position[0], position[1] + 1),
+             (position[0] - 1, position[1]),
+             (position[0], position[1] - 1)]
     return [c for c in cells if ((0 <= c[0] < Game.SIZE) and (0 <= c[1] < Game.SIZE))]
 
 class Game():
     SIZE = 5
-    EMPTY = [[[0, 0]] * SIZE] * SIZE
+    EMPTY = [[(0, 0)] * SIZE] * SIZE
 
     def __init__(self, state):
         self.cells = state
+        self.can_win = self.check_can_win(state)
         self.winner = None
 
     def get_colour(self, position):
         return self.cells[position[0]][position[1]][0]
 
     def set_colour(self, position, colour):
-        old_colour = self.cells[position[0]][position[1]][0]
-        self.cells[position[0]][position[1]][0] = colour
-        return old_colour != colour
+        old_cell = self.cells[position[0]][position[1]]
+        self.cells[position[0]][position[1]] = (colour, old_cell[1])
+        return old_cell[0] != colour
 
     def get_quantity(self, position):
         return self.cells[position[0]][position[1]][1]
 
     def set_quantity(self, position, quantity):
-        self.cells[position[0]][position[1]][1] = quantity
+        old_cell = self.cells[position[0]][position[1]]
+        self.cells[position[0]][position[1]] = (old_cell[0], quantity)
 
     def increase_quantity(self, position):
         self.set_quantity(position, self.get_quantity(position) + 1)
@@ -67,6 +69,7 @@ class Game():
         new_game.__move__(position, colour)
         return new_game
 
+    #@profile
     def __move__(self, position, colour):
         if self.move_allowed(position, colour):
             self.increase_quantity(position)
@@ -75,6 +78,7 @@ class Game():
         else:
             raise AssertionError("Move not allowed " + str(colour) + " to " + str(position) + " in game " + str(self.cells))
 
+    #@profile
     def cascade(self, lastmove):
         colour_exploding = self.explodes(lastmove)
         if colour_exploding:
@@ -82,16 +86,17 @@ class Game():
             for cell in surroundings(lastmove):
                 converted = self.convert(cell, colour_exploding)
                 self.__move__(cell, colour_exploding)
-                if converted and self.check_ended():
+                if converted and self.check_ended(colour_exploding):
                     self.winner = colour_exploding
                     return
 
     def reset(self, position):
-        self.cells[position[0]][position[1]] = [0, 0]
+        self.cells[position[0]][position[1]] = (0, 0)
 
     def convert(self, position, colour_exploding):
         return self.set_colour(position, colour_exploding)
 
+    #@profile
     def explodes(self, position):
         n = self.get_quantity(position)
         return self.get_colour(position) if n >= len(surroundings(position)) else None
@@ -115,17 +120,15 @@ class Game():
                 moves.append(pos)
         return moves
 
-    def check_ended(self):
-        seen = [0, 0]
+    #@profile
+    def check_ended(self, colour):
+        if not self.can_win:
+            return False
         for row in self.cells:
             for c in row:
-                colour_index = c[0] - 1
-                q = c[1]
-                if colour_index != -1:
-                    seen[colour_index] += q
-                    if seen[0] > 0 and seen[1] > 0:
-                        return False
-        return (seen[0] == 0 or seen[1] == 0) and seen[0] + seen[1] > 1
+                if c[0] != 0 and c[0] != colour:
+                    return False
+        return True
 
     @staticmethod
     def surroundings(position):
@@ -138,7 +141,7 @@ class Game():
     @staticmethod
     def state_from_string(state):
         rows = state.strip().split("\n")
-        return [[[int(c[0]), int(c[1])] for c in r.split(" ")] for r in rows]
+        return [[(int(c[0]), int(c[1])) for c in r.split(" ")] for r in rows]
 
     @staticmethod
     def position_from_string(position):
@@ -149,7 +152,7 @@ class Game():
         col_index = 0
         for row in self.cells:
             for c in row:
-                yield c, [row_index, col_index]
+                yield c, (row_index, col_index)
                 col_index += 1
             col_index = 0
             row_index += 1
@@ -163,6 +166,17 @@ class Game():
                 newrow.append(c[:])
             newstate.append(newrow)
         return newstate
+
+    def check_can_win(self, cells):
+        seen = False
+        for row in cells:
+            for c in row:
+                if c[0] != 0:
+                    if seen:
+                        return True
+                    else:
+                        seen = True
+        return False
 
 
 def to_tuple(cells):
@@ -191,8 +205,12 @@ class Player():
         self.max_games_explored = max_games_explored
         self.colour = colour
         self.games_explored = 0
+        self.games_pruned = 0
+        self.winning_games = 0
         self.max_depth = max_depth
-        self.num_seen = 0
+
+    def stats(self):
+        return "ge:{}, gp:{}, wg:{}".format(self.games_explored, self.games_pruned, self.winning_games)
 
     def pick_move(self, state):
         self.seen = {}
@@ -200,32 +218,29 @@ class Player():
         return self.minmax(state, 0)
 
     def minmax(self, game, depth, alpha=-FLOAT_INF, beta=FLOAT_INF, is_max=True):
-        # entry_seen = (is_max, to_tuple(game.cells))
-        # if entry_seen in self.seen:
-        #     seen_ = self.seen[entry_seen]
-        #     self.num_seen += 1
-        #     #print "Move " + str(seen_) + " from seen state " + str(entry_seen)
-        #     return seen_
-        #print depth, alpha, beta
         self.games_explored += 1
         colour_here = self.colour if is_max else self.opponent_colour()
         moves = game.moves_for(colour_here)
         limit = -FLOAT_INF if is_max else FLOAT_INF
         best_score_and_move = limit, None
+        # We want to order the moves we have by how well perform with the heuristic
         scored_moves = []
         for move in moves:
             new_game_scored = game.move(move, colour_here)
             scored_moves.append((self.heuristic(new_game_scored), new_game_scored, move))
-
+        depth_ = depth + 1
         for scored_move in sorted(scored_moves, key=lambda x: x[0], reverse=is_max):
             new_game_score, new_game, move = scored_move
-            depth_ = depth + 1
-            if new_game.check_ended():
+            if new_game.check_ended(self.colour if is_max else self.opponent_colour()):
+                # The new game is ended, maximise the score for max/min and stop searching here
                 best_score_and_move = -limit, move
+                self.winning_games += 1
                 break
             elif (depth_ >= self.max_depth) or self.games_explored > self.max_games_explored:
+                # We reached a limit, just using heuristicd here under new_game_score
                 pass
             else:
+                # Go down using the current alpha and beta
                 new_game_score, _ = self.minmax(new_game, depth_, alpha=alpha, beta=beta, is_max=not is_max)
             if (not best_score_and_move[1]) or \
                     (new_game_score > best_score_and_move[0] and is_max) or \
@@ -237,6 +252,7 @@ class Player():
                     beta = min(beta, best_score_and_move[0])
                 if beta < alpha:
                     #print beta, alpha, colour_here, depth
+                    self.games_pruned += 1
                     break
         assert best_score_and_move[1], "Not returning a move for game {} and depth {} and colour {}, instead {}".format(game.cells, depth, colour_here, best_score_and_move)
         #self.seen[entry_seen] = best_score_and_move
@@ -245,12 +261,8 @@ class Player():
 
     def heuristic(self, game):
         count_balls, count_cells = game.count()
-        # about_to_explode = 0
-        # for c, pos in game.iter_cells():
-        #     if len(surroundings(pos)) <= game.get_quantity(pos) + 1:
-        #         about_to_explode += 1 if c == self.colour else - 1
         diff = count_balls[self.colour] - count_balls[self.opponent_colour()] - (count_cells[self.colour])/2
-        return diff #+ about_to_explode/2
+        return diff
 
     def opponent_colour(self):
         return 3 - self.colour
@@ -270,8 +282,7 @@ if __name__ == "__main__":
     #cProfile.run('player.pick_move(state)', sort=1)
     score, move = player.pick_move(state)
     print(str(move[0]) + " " + str(move[1]))
-    print(player.games_explored)
-    print(player.num_seen)
+    print(player.stats())
     print(score)
     print(time.time() - start_time)
 

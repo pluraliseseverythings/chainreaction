@@ -83,11 +83,11 @@ class GameTest(unittest.TestCase):
 
     def test_game_won(self):
         game = Game(state=Game.state_from_string(GameTest.WON))
-        self.assertTrue(game.check_ended())
+        self.assertTrue(game.check_ended(1))
         game = Game(state=Game.state_from_string(GameTest.INPUT))
-        self.assertFalse(game.check_ended())
+        self.assertFalse(game.check_ended(1))
         game = Game(state=Game.state_from_string(EMPTY_INPUT))
-        self.assertFalse(game.check_ended())
+        self.assertFalse(game.check_ended(1))
 
     def test_position_from_string(self):
         self.assertEqual(Game.position_from_string(GameTest.MOVE), [2, 2])
