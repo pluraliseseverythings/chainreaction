@@ -1,9 +1,13 @@
 import copy
 import cProfile
+import logging
 import sys
 import time
 
 FLOAT_INF = float("inf")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def memoize(f):
     """ Memoization decorator for a function taking one or more arguments. """
@@ -41,7 +45,9 @@ class Game():
         return self.cells[position[0]][position[1]][0]
 
     def set_colour(self, position, colour):
+        old_colour = self.cells[position[0]][position[1]][0]
         self.cells[position[0]][position[1]][0] = colour
+        return old_colour != colour
 
     def get_quantity(self, position):
         return self.cells[position[0]][position[1]][1]
@@ -74,9 +80,9 @@ class Game():
         if colour_exploding:
             self.reset(lastmove)
             for cell in surroundings(lastmove):
-                self.convert(cell, colour_exploding)
+                converted = self.convert(cell, colour_exploding)
                 self.__move__(cell, colour_exploding)
-                if self.check_ended():
+                if converted and self.check_ended():
                     self.winner = colour_exploding
                     return
 
@@ -84,7 +90,7 @@ class Game():
         self.cells[position[0]][position[1]] = [0, 0]
 
     def convert(self, position, colour_exploding):
-        self.set_colour(position, colour_exploding)
+        return self.set_colour(position, colour_exploding)
 
     def explodes(self, position):
         n = self.get_quantity(position)
@@ -113,13 +119,13 @@ class Game():
         seen = [0, 0]
         for row in self.cells:
             for c in row:
-                colour = c[0]
+                colour_index = c[0] - 1
                 q = c[1]
-                if colour != 0:
-                    seen[colour - 1] += q
-                    if 1 < seen[colour - 1] == seen[0] + seen[1]:
+                if colour_index != -1:
+                    seen[colour_index] += q
+                    if seen[0] > 0 and seen[1] > 0:
                         return False
-        return len(seen) == 1
+        return (seen[0] == 0 or seen[1] == 0) and seen[0] + seen[1] > 1
 
     @staticmethod
     def surroundings(position):
@@ -169,6 +175,14 @@ def to_tuple(cells):
     return tuple(t_cells)
 
 
+def pretty_state(cells):
+    s = ""
+    for row in cells:
+        for c in row:
+            s += str(c[0]) + str(c[1]) + " "
+        s += "\n"
+    return s
+
 
 class Player():
     MAX_DEPTH = 4
@@ -210,21 +224,23 @@ class Player():
                 best_score_and_move = -limit, move
                 break
             elif (depth_ >= self.max_depth) or self.games_explored > self.max_games_explored:
-                best_score_and_move = new_game_score, move
+                pass
             else:
                 new_game_score, _ = self.minmax(new_game, depth_, alpha=alpha, beta=beta, is_max=not is_max)
-            best_score = best_score_and_move[0]
-            if not best_score_and_move[1] or (new_game_score > best_score and is_max) or (new_game_score < best_score):
+            if (not best_score_and_move[1]) or \
+                    (new_game_score > best_score_and_move[0] and is_max) or \
+                    (new_game_score < best_score_and_move[0] and not is_max):
                 best_score_and_move = new_game_score, move
                 if is_max:
-                    alpha = max(alpha, best_score)
+                    alpha = max(alpha, best_score_and_move[0])
                 else:
-                    beta = min(beta, best_score)
+                    beta = min(beta, best_score_and_move[0])
                 if beta < alpha:
                     #print beta, alpha, colour_here, depth
                     break
         assert best_score_and_move[1], "Not returning a move for game {} and depth {} and colour {}, instead {}".format(game.cells, depth, colour_here, best_score_and_move)
         #self.seen[entry_seen] = best_score_and_move
+        logger.debug("\n{} state:\n{}Best move {} with score {}".format(depth, pretty_state(game.cells), best_score_and_move[1], best_score_and_move[0]))
         return best_score_and_move
 
     def heuristic(self, game):
@@ -247,7 +263,7 @@ if __name__ == "__main__":
         state += sys.stdin.readline()
         state_lines += 1
     colour = int(sys.stdin.readline())
-    player = Player(colour, 4, max_games_explored=9000)
+    player = Player(colour, 6, max_games_explored=5000)
     state = Game.state_from_string(state)
     game = Game(state)
     start_time = time.time()

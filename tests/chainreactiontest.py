@@ -1,5 +1,5 @@
 import unittest
-
+import cProfile
 from chainreaction import *
 
 STATE_1 = [[[1, 1], [0, 0], [1, 1], [1, 2], [0, 0]],
@@ -13,6 +13,33 @@ STATE_2 = "11 22 00 21 00\n" \
           "11 13 12 13 11\n" \
           "11 21 13 11 12\n" \
           "11 12 12 00 11"
+
+STATE_3 = "00 00 00 00 00\n" \
+          "00 00 00 00 00\n" \
+          "00 00 00 00 00\n" \
+          "00 00 00 23 12\n" \
+          "00 00 00 21 11"
+
+STATE_4 = "00 00 00 00 00\n" \
+          "00 00 00 00 00\n" \
+          "00 00 00 00 00\n" \
+          "00 00 00 00 22\n" \
+          "21 00 11 22 00"
+
+STATE_5 = "00 00 00 00 11 \n" \
+          "00 21 00 00 00 \n" \
+          "11 00 00 00 00 \n" \
+          "00 00 00 00 22 \n" \
+          "21 00 11 22 00"
+
+#WHY SO SLOW?
+STATE_6 = "00 21 12 12 11\n" \
+          "21 23 12 13 00\n" \
+          "22 00 21 12 12\n" \
+          "21 23 12 00 21\n" \
+          "21 22 22 21 21"
+
+
 
 
 EMPTY_INPUT = "00 00 00 00 00\n" \
@@ -56,7 +83,6 @@ class GameTest(unittest.TestCase):
 
     def test_game_won(self):
         game = Game(state=Game.state_from_string(GameTest.WON))
-
         self.assertTrue(game.check_ended())
         game = Game(state=Game.state_from_string(GameTest.INPUT))
         self.assertFalse(game.check_ended())
@@ -96,11 +122,11 @@ class GameTest(unittest.TestCase):
         game = Game(STATE_1)
         moves = game.moves_for(2)
         for m in moves:
-            game.move(m)
+            game.move(m, 2)
 
     def test_count(self):
         game = Game(state=Game.state_from_string(GameTest.INPUT))
-        self.assertEquals(game.count(), {1: 6, 2: 2}, {1: 2, 2: 2}
+        self.assertEquals(game.count(), ({1: 6, 2: 2}, {1: 2, 2: 2}))
 
 
 class PlayerTest(unittest.TestCase):
@@ -117,6 +143,28 @@ class PlayerTest(unittest.TestCase):
     def test_pick_move_2(self):
         p = Player(1)
         m = p.pick_move(Game.state_from_string(STATE_2))
-        self.assertEqual(m, [4,4])
+        self.assertEqual(m, (-8, [0, 2]))
+
+    def test_pick_move_3(self):
+        p = Player(1)
+        m = p.pick_move(Game.state_from_string(STATE_3))
+        self.assertEqual(m, (float("inf"), [4,4]))
+
+    def test_pick_move_4(self):
+        p = Player(1)
+        m = p.pick_move(Game.state_from_string(STATE_4))
+        self.assertEqual(m, (float("inf"), [4,4]))
+
+    def test_pick_move_5(self):
+        p = Player(1, max_depth=1)
+        m = p.pick_move(Game.state_from_string(STATE_5))
+        self.assertEqual(m, (-3, [4, 2]))
+
+    def test_pick_move_6(self):
+        p = Player(1, max_depth=6, max_games_explored=5000)
+        cProfile.runctx('p.pick_move(Game.state_from_string(STATE_6))', {'Game':Game, 'STATE_6':STATE_6, 'p':p}, {}, sort=1)
+        m = p.pick_move(Game.state_from_string(STATE_6))
+        self.assertEqual(m, (-3, [4, 2]))
+
 
 
