@@ -1,16 +1,25 @@
-import copy
-import cProfile
 import logging
 import sys
 import time
+
+RATIO_OF_DISCARDED_MOVESD = 4
+
+CRISIS_GAME_RATIO = 4
+
+MGE = 6200
+
+MAX_CASCADE_DEPTH = 4
+MAX_CASCADE_DEPTH_CRISIS = 2
 
 FLOAT_INF = float("inf")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 def memoize(f):
     """ Memoization decorator for a function taking one or more arguments. """
+
     class memodict(dict):
         def __getitem__(self, *key):
             return dict.__getitem__(self, key)
@@ -21,9 +30,14 @@ def memoize(f):
 
     return memodict().__getitem__
 
+@memoize
+def side(c_i, r_i):
+    return (r_i == 0) or (r_i == Game.SIZE - 1) or (c_i == 0) or (c_i == Game.SIZE - 1)
 
-# def surroundings(position):
-#     return surroundings_tuple(tuple(position))
+@memoize
+def corner(c_i, r_i):
+    return (r_i == 0 and c_i == 0) or (r_i == Game.SIZE - 1 and c_i == 0) or (
+        r_i == 0 and c_i == Game.SIZE - 1) or (r_i == Game.SIZE - 1 and c_i == Game.SIZE - 1)
 
 @memoize
 def surroundings(position):
@@ -33,14 +47,24 @@ def surroundings(position):
              (position[0], position[1] - 1)]
     return [c for c in cells if ((0 <= c[0] < Game.SIZE) and (0 <= c[1] < Game.SIZE))]
 
+
+def pretty_state(cells):
+    s = ""
+    for row in cells:
+        for c in row:
+            s += str(c[0]) + str(c[1]) + " "
+        s += "\n"
+    return s
+
+
 class Game():
     SIZE = 5
-    EMPTY = [[(0, 0)] * SIZE] * SIZE
 
-    def __init__(self, state):
+    def __init__(self, state, max_cascade_depth=MAX_CASCADE_DEPTH):
         self.cells = state
-        self.can_win = self.check_can_win(state)
+        self.can_win = self.check_can_win()
         self.winner = None
+        self.max_cascade_depth = max_cascade_depth
 
     def get_colour(self, position):
         return self.cells[position[0]][position[1]][0]
@@ -65,28 +89,29 @@ class Game():
         return current_colour == 0 or current_colour == colour
 
     def move(self, position, colour):
-        new_game = Game(self.copy_state(self.cells))
+        # We get a copy of the game
+        new_game = Game(self.copy_state(self.cells), max_cascade_depth=self.max_cascade_depth)
         new_game.__move__(position, colour)
         return new_game
 
-    #@profile
-    def __move__(self, position, colour):
+    def __move__(self, position, colour, depth=0):
         if self.move_allowed(position, colour):
             self.increase_quantity(position)
             self.set_colour(position, colour)
-            self.cascade(position)
+            if depth < self.max_cascade_depth:
+                self.cascade(position, depth)
         else:
-            raise AssertionError("Move not allowed " + str(colour) + " to " + str(position) + " in game " + str(self.cells))
+            raise AssertionError(
+                "Move not allowed " + str(colour) + " to " + str(position) + " in game " + str(self.cells))
 
-    #@profile
-    def cascade(self, lastmove):
+    def cascade(self, lastmove, depth):
         colour_exploding = self.explodes(lastmove)
         if colour_exploding:
             self.reset(lastmove)
             for cell in surroundings(lastmove):
                 converted = self.convert(cell, colour_exploding)
-                self.__move__(cell, colour_exploding)
-                if converted and self.check_ended(colour_exploding):
+                self.__move__(cell, colour_exploding, depth + 1)
+                if converted and self.check_ended_after_move_from_colour(colour_exploding):
                     self.winner = colour_exploding
                     return
 
@@ -96,22 +121,28 @@ class Game():
     def convert(self, position, colour_exploding):
         return self.set_colour(position, colour_exploding)
 
-    #@profile
     def explodes(self, position):
         n = self.get_quantity(position)
         return self.get_colour(position) if n >= len(surroundings(position)) else None
 
     def count(self):
-        count_balls = {1:0, 2:0}
-        count_cells = {1:0, 2:0}
-        for c, _ in self.iter_cells():
+        count_balls = {1: 0, 2: 0}
+        #count_cells = {1: 0, 2: 0}
+        count_corners_balls = {1: 0, 2: 0}
+        count_edges_balls = {1: 0, 2: 0}
+        for c, (r_i, c_i) in self.iter_cells():
             colour = c[0]
             if colour == 0:
                 continue
             value = c[1]
-            count_balls[colour] += value
-            count_cells[colour] += 1
-        return count_balls, count_cells
+            #count_cells[colour] += 1
+            if corner(c_i, r_i):
+                count_corners_balls[colour] += value
+            elif side(c_i, r_i):
+                count_edges_balls[colour] += value
+            else:
+                count_balls[colour] += value
+        return count_balls, count_edges_balls, count_corners_balls
 
     def moves_for(self, colour):
         moves = []
@@ -120,23 +151,14 @@ class Game():
                 moves.append(pos)
         return moves
 
-    #@profile
-    def check_ended(self, colour):
+    # @profile
+    def check_ended_after_move_from_colour(self, colour):
         if not self.can_win:
             return False
-        for row in self.cells:
-            for c in row:
-                if c[0] != 0 and c[0] != colour:
-                    return False
+        for c, _ in self.iter_cells():
+            if c[0] != 0 and c[0] != colour:
+                return False
         return True
-
-    @staticmethod
-    def surroundings(position):
-        cells = [[position[0] + 1, position[1]],
-                 [position[0], position[1] + 1],
-                 [position[0] - 1, position[1]],
-                 [position[0], position[1] - 1]]
-        return [c for c in cells if ((0 <= c[0] < Game.SIZE) and (0 <= c[1] < Game.SIZE))]
 
     @staticmethod
     def state_from_string(state):
@@ -145,17 +167,12 @@ class Game():
 
     @staticmethod
     def position_from_string(position):
-        return [int(p) for p in position.strip().split(" ")]
+        return tuple([int(p) for p in position.strip().split(" ")])
 
     def iter_cells(self):
-        row_index = 0
-        col_index = 0
-        for row in self.cells:
-            for c in row:
+        for row_index, row in enumerate(self.cells):
+            for col_index, c in enumerate(row):
                 yield c, (row_index, col_index)
-                col_index += 1
-            col_index = 0
-            row_index += 1
 
     @staticmethod
     def copy_state(cells):
@@ -167,71 +184,64 @@ class Game():
             newstate.append(newrow)
         return newstate
 
-    def check_can_win(self, cells):
+    def check_can_win(self):
         seen = False
-        for row in cells:
-            for c in row:
-                if c[0] != 0:
-                    if seen:
-                        return True
-                    else:
-                        seen = True
+        for c, _ in self.iter_cells():
+            if c[0] != 0:
+                if seen:
+                    return True
+                else:
+                    seen = True
         return False
 
-
-def to_tuple(cells):
-    t_cells = []
-    for row in cells:
-        t_row = []
-        for c in row:
-            t_row.append(tuple(c))
-        t_cells.append(tuple(t_row))
-    return tuple(t_cells)
-
-
-def pretty_state(cells):
-    s = ""
-    for row in cells:
-        for c in row:
-            s += str(c[0]) + str(c[1]) + " "
-        s += "\n"
-    return s
-
-
 class Player():
-    MAX_DEPTH = 4
-
-    def __init__(self, colour, max_depth=MAX_DEPTH, max_games_explored=20000):
+    def __init__(self, colour, max_depth=None, max_games_explored=MGE):
         self.max_games_explored = max_games_explored
         self.colour = colour
+        self.max_depth = max_depth
+        self.complexity = None
         self.games_explored = 0
         self.games_pruned = 0
         self.winning_games = 0
-        self.max_depth = max_depth
+        self.crisis_games = 0
 
     def stats(self):
-        return "ge:{}, gp:{}, wg:{}".format(self.games_explored, self.games_pruned, self.winning_games)
+        return "ge:{}, gp:{}, wg:{}, md:{}, c:{}, cg:{}".format(self.games_explored, self.games_pruned,
+                                                                self.winning_games, self.max_depth, self.complexity,
+                                                                self.crisis_games)
 
     def pick_move(self, state):
-        self.seen = {}
         state = Game(state=state)
+        self.complexity = len(state.moves_for(self.colour))
+        if not self.max_depth:
+            x = float(self.complexity)
+            self.max_depth = \
+                17.2117 - 0.898064 * x + 0.016048 * x * x
         return self.minmax(state, 0)
 
     def minmax(self, game, depth, alpha=-FLOAT_INF, beta=FLOAT_INF, is_max=True):
         self.games_explored += 1
-        colour_here = self.colour if is_max else self.opponent_colour()
+        if self.games_explored > self.max_games_explored / CRISIS_GAME_RATIO:
+            game.max_cascade_depth = MAX_CASCADE_DEPTH_CRISIS
+            self.crisis_games += 1
+        colour_here = self.colour_from_max(is_max)
         moves = game.moves_for(colour_here)
         limit = -FLOAT_INF if is_max else FLOAT_INF
         best_score_and_move = limit, None
         # We want to order the moves we have by how well perform with the heuristic
         scored_moves = []
+
         for move in moves:
             new_game_scored = game.move(move, colour_here)
-            scored_moves.append((self.heuristic(new_game_scored), new_game_scored, move))
+            heuristic_score = self.heuristic(new_game_scored)
+            scored_moves.append((heuristic_score, new_game_scored, move))
         depth_ = depth + 1
-        for scored_move in sorted(scored_moves, key=lambda x: x[0], reverse=is_max):
+        sorted_moves = sorted(scored_moves, key=lambda x: x[0], reverse=is_max)
+        num_moves_available = len(sorted_moves)
+
+        for scored_move in sorted_moves[0:num_moves_available - num_moves_available/ RATIO_OF_DISCARDED_MOVESD]:
             new_game_score, new_game, move = scored_move
-            if new_game.check_ended(self.colour if is_max else self.opponent_colour()):
+            if new_game.check_ended_after_move_from_colour(self.colour_from_max(is_max)):
                 # The new game is ended, maximise the score for max/min and stop searching here
                 best_score_and_move = -limit, move
                 self.winning_games += 1
@@ -251,21 +261,30 @@ class Player():
                 else:
                     beta = min(beta, best_score_and_move[0])
                 if beta < alpha:
-                    #print beta, alpha, colour_here, depth
+                    # print beta, alpha, colour_here, depth
                     self.games_pruned += 1
                     break
-        assert best_score_and_move[1], "Not returning a move for game {} and depth {} and colour {}, instead {}".format(game.cells, depth, colour_here, best_score_and_move)
-        #self.seen[entry_seen] = best_score_and_move
-        logger.debug("\n{} state:\n{}Best move {} with score {}".format(depth, pretty_state(game.cells), best_score_and_move[1], best_score_and_move[0]))
+        assert best_score_and_move[1], "Not returning a move for game {} and depth {} and colour {}, instead {}".format(
+            game.cells, depth, colour_here, best_score_and_move)
+        # self.seen[entry_seen] = best_score_and_move
+        logger.debug(
+            "\n{} state:\n{}Best move {} with score {}".format(depth, pretty_state(game.cells), best_score_and_move[1],
+                                                               best_score_and_move[0]))
         return best_score_and_move
 
+    def colour_from_max(self, is_max):
+        return self.colour if is_max else self.opponent_colour()
+
     def heuristic(self, game):
-        count_balls, count_cells = game.count()
-        diff = count_balls[self.colour] - count_balls[self.opponent_colour()] - (count_cells[self.colour])/2
+        count_balls, count_edges_balls, count_corners_balls = game.count()
+        diff = 3 * (count_balls[self.colour] - count_balls[self.opponent_colour()]) \
+               + 4.5 * (count_edges_balls[self.colour] - count_edges_balls[self.opponent_colour()]) \
+               + 5.5 * (count_corners_balls[self.colour] - count_corners_balls[self.opponent_colour()])
         return diff
 
     def opponent_colour(self):
         return 3 - self.colour
+
 
 if __name__ == "__main__":
     state_lines = 0
@@ -275,15 +294,13 @@ if __name__ == "__main__":
         state += sys.stdin.readline()
         state_lines += 1
     colour = int(sys.stdin.readline())
-    player = Player(colour, 6, max_games_explored=5000)
+    player = Player(colour)
     state = Game.state_from_string(state)
     game = Game(state)
     start_time = time.time()
-    #cProfile.run('player.pick_move(state)', sort=1)
+    # cProfile.run('player.pick_move(state)', sort=1)
     score, move = player.pick_move(state)
     print(str(move[0]) + " " + str(move[1]))
     print(player.stats())
     print(score)
     print(time.time() - start_time)
-
-
