@@ -2,7 +2,7 @@ import logging
 import sys
 import time
 
-HURRY_SECS = 4.937
+HURRY_SECS = 4.916
 
 MGE = 50000
 RATIO_OF_DISCARDED_MOVES = 6
@@ -193,6 +193,13 @@ class Game():
                     seen = True
         return False
 
+class Params():
+    def __init__(self, depth_params=(17.2117,0.898064, 0.016048), empties_threshold=15,
+                 h_initial = (3,3.5,4.5), h_final = (3,3,3)):
+        self.h_final = h_final
+        self.h_initial = h_initial
+        self.empties_threshold = empties_threshold
+        self.depth_params = depth_params
 
 class Player():
     def __init__(self, colour, max_depth=None, max_games_explored=MGE):
@@ -250,8 +257,7 @@ class Player():
         sorted_moves = sorted(scored_moves, key=lambda x: x[0], reverse=is_max)
         num_moves_available = len(sorted_moves)
 
-        for scored_move in sorted_moves[
-                           0:max(5, (num_moves_available - int(num_moves_available / RATIO_OF_DISCARDED_MOVES)))]:
+        for scored_move in sorted_moves:
             new_game_score, new_game, move = scored_move
             if new_game.check_ended_after_move_from_colour(self.colour_from_max(is_max)):
                 # The new game is ended, maximise the score for max/min and stop searching here
