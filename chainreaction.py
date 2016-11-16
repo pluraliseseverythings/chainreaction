@@ -2,14 +2,13 @@ import logging
 import sys
 import time
 
-RATIO_OF_DISCARDED_MOVESD = 4
+HURRY_SECS = 4.935
 
+MGE = 50000
+RATIO_OF_DISCARDED_MOVES = 6
 CRISIS_GAME_RATIO = 4
-
-MGE = 6200
-
-MAX_CASCADE_DEPTH = 4
-MAX_CASCADE_DEPTH_CRISIS = 2
+MAX_CASCADE_DEPTH = 100
+MAX_CASCADE_DEPTH_CRISIS = 100
 
 FLOAT_INF = float("inf")
 
@@ -30,14 +29,22 @@ def memoize(f):
 
     return memodict().__getitem__
 
+
 @memoize
 def side(c_i, r_i):
     return (r_i == 0) or (r_i == Game.SIZE - 1) or (c_i == 0) or (c_i == Game.SIZE - 1)
+
 
 @memoize
 def corner(c_i, r_i):
     return (r_i == 0 and c_i == 0) or (r_i == Game.SIZE - 1 and c_i == 0) or (
         r_i == 0 and c_i == Game.SIZE - 1) or (r_i == Game.SIZE - 1 and c_i == Game.SIZE - 1)
+
+
+@memoize
+def cell_score(c, g, r, colour, empties_cond):
+    return (g[1] + ((0.3) if (r == 0 or c == 0) and empties_cond > 6 else 0)) * ((-1) if g[0] == colour else 1)
+
 
 @memoize
 def surroundings(position):
@@ -98,8 +105,7 @@ class Game():
         if self.move_allowed(position, colour):
             self.increase_quantity(position)
             self.set_colour(position, colour)
-            if depth < self.max_cascade_depth:
-                self.cascade(position, depth)
+            self.cascade(position, depth)
         else:
             raise AssertionError(
                 "Move not allowed " + str(colour) + " to " + str(position) + " in game " + str(self.cells))
@@ -127,21 +133,17 @@ class Game():
 
     def count(self):
         count_balls = {1: 0, 2: 0}
-        #count_cells = {1: 0, 2: 0}
         count_corners_balls = {1: 0, 2: 0}
         count_edges_balls = {1: 0, 2: 0}
         for c, (r_i, c_i) in self.iter_cells():
-            colour = c[0]
-            if colour == 0:
-                continue
-            value = c[1]
-            #count_cells[colour] += 1
-            if corner(c_i, r_i):
-                count_corners_balls[colour] += value
-            elif side(c_i, r_i):
-                count_edges_balls[colour] += value
-            else:
-                count_balls[colour] += value
+            if c[0] != 0:
+                value = c[1]
+                if corner(c_i, r_i):
+                    count_corners_balls[c[0]] += value
+                elif side(c_i, r_i):
+                    count_edges_balls[c[0]] += value
+                else:
+                    count_balls[c[0]] += value
         return count_balls, count_edges_balls, count_corners_balls
 
     def moves_for(self, colour):
@@ -178,10 +180,7 @@ class Game():
     def copy_state(cells):
         newstate = []
         for row in cells:
-            newrow = []
-            for c in row:
-                newrow.append(c[:])
-            newstate.append(newrow)
+            newstate.append(row[:])
         return newstate
 
     def check_can_win(self):
@@ -194,6 +193,7 @@ class Game():
                     seen = True
         return False
 
+
 class Player():
     def __init__(self, colour, max_depth=None, max_games_explored=MGE):
         self.max_games_explored = max_games_explored
@@ -204,26 +204,37 @@ class Player():
         self.games_pruned = 0
         self.winning_games = 0
         self.crisis_games = 0
+        self.empties = 0
+        self.time_start = 0
+        self.hurried_moves = 0
 
     def stats(self):
-        return "ge:{}, gp:{}, wg:{}, md:{}, c:{}, cg:{}".format(self.games_explored, self.games_pruned,
-                                                                self.winning_games, self.max_depth, self.complexity,
-                                                                self.crisis_games)
+        return "ge:{}, gp:{}, wg:{}, md:{}, c:{}, cg:{}, hm:{}".format(self.games_explored, self.games_pruned,
+                                                                       self.winning_games, self.max_depth,
+                                                                       self.complexity,
+                                                                       self.crisis_games, self.hurried_moves)
 
     def pick_move(self, state):
         state = Game(state=state)
         self.complexity = len(state.moves_for(self.colour))
+        for c, _ in state.iter_cells():
+            if c[0] == 0:
+                self.empties += 1
         if not self.max_depth:
             x = float(self.complexity)
             self.max_depth = \
                 17.2117 - 0.898064 * x + 0.016048 * x * x
+            # 9.84173 - 0.429846 * x + 0.00952701 * x * x
+
+        self.time_start = time.clock()
         return self.minmax(state, 0)
 
     def minmax(self, game, depth, alpha=-FLOAT_INF, beta=FLOAT_INF, is_max=True):
         self.games_explored += 1
-        if self.games_explored > self.max_games_explored / CRISIS_GAME_RATIO:
-            game.max_cascade_depth = MAX_CASCADE_DEPTH_CRISIS
-            self.crisis_games += 1
+        elapsed = (time.clock() - self.time_start)
+        hurry_up = False
+        if elapsed > HURRY_SECS:
+            hurry_up = True
         colour_here = self.colour_from_max(is_max)
         moves = game.moves_for(colour_here)
         limit = -FLOAT_INF if is_max else FLOAT_INF
@@ -239,16 +250,17 @@ class Player():
         sorted_moves = sorted(scored_moves, key=lambda x: x[0], reverse=is_max)
         num_moves_available = len(sorted_moves)
 
-        for scored_move in sorted_moves[0:num_moves_available - num_moves_available/ RATIO_OF_DISCARDED_MOVESD]:
+        for scored_move in sorted_moves[
+                           0:max(5, (num_moves_available - int(num_moves_available / RATIO_OF_DISCARDED_MOVES)))]:
             new_game_score, new_game, move = scored_move
             if new_game.check_ended_after_move_from_colour(self.colour_from_max(is_max)):
                 # The new game is ended, maximise the score for max/min and stop searching here
                 best_score_and_move = -limit, move
                 self.winning_games += 1
                 break
-            elif (depth_ >= self.max_depth) or self.games_explored > self.max_games_explored:
+            elif hurry_up or (depth_ >= self.max_depth) or self.games_explored > self.max_games_explored:
                 # We reached a limit, just using heuristicd here under new_game_score
-                pass
+                self.hurried_moves += 1
             else:
                 # Go down using the current alpha and beta
                 new_game_score, _ = self.minmax(new_game, depth_, alpha=alpha, beta=beta, is_max=not is_max)
@@ -277,10 +289,20 @@ class Player():
 
     def heuristic(self, game):
         count_balls, count_edges_balls, count_corners_balls = game.count()
-        diff = 3 * (count_balls[self.colour] - count_balls[self.opponent_colour()]) \
-               + 4.5 * (count_edges_balls[self.colour] - count_edges_balls[self.opponent_colour()]) \
-               + 5.5 * (count_corners_balls[self.colour] - count_corners_balls[self.opponent_colour()])
-        return diff
+        if self.empties > 15:
+            return 3 * (count_balls[self.colour] - count_balls[self.opponent_colour()]) \
+                   + 3.5 * (count_edges_balls[self.colour] - count_edges_balls[self.opponent_colour()]) \
+                   + 4.5 * (count_corners_balls[self.colour] - count_corners_balls[self.opponent_colour()])
+        else:
+            return 3 * (count_balls[self.colour] - count_balls[self.opponent_colour()])
+
+    def __heuristic(self, game):
+        score = 0
+        for g, (r, c) in game.iter_cells():
+            if g[0] != 0:
+                score += cell_score(c, g, r, self.colour, self.empties > 6)
+        print score
+        return score
 
     def opponent_colour(self):
         return 3 - self.colour
