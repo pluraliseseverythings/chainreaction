@@ -40,14 +40,8 @@ STATE_6 = "00 21 12 12 11\n" \
           "21 22 22 21 21"
 
 STATE_WUT = "00 12 11 12 11\n11 12 13 00 12\n11 13 13 11 12\n21 00 22 13 00\n21 21 22 22 11"
-S
-11 12 12 12 00
-12 11 13 12 12
-11 00 13 00 12
-11 13 13 12 22
-11 11 12 12 11
-2
-3 4
+
+STATE_WIN = [("11 12 12 12 00\n12 11 13 12 12\n11 00 13 00 12\n11 13 13 12 22\n11 11 12 12 11", 2, (3, 4))]
 
 STATES = [("11 11 22 00 21\n11 23 00 21 11\n11 00 21 00 12\n11 00 23 00 00\n11 00 00 11 21", 1, (2, 1), True),
           ("00 12 11 22 21\n11 13 13 11 22\n11 00 00 00 00\n21 00 00 00 22\n21 22 22 22 21", 1, (2, 1), True)]
@@ -141,10 +135,6 @@ class GameTest(unittest.TestCase):
         for m in moves:
             game.move(m, 2)
 
-    def test_count(self):
-        game = Game(state=Game.state_from_string(GameTest.INPUT))
-        self.assertEquals(game.count(), ({1: 6, 2: 2}, {1: 2, 2: 2}))
-
 
 class PlayerTest(unittest.TestCase):
     def test_pick_move(self):
@@ -200,6 +190,10 @@ class PlayerTest(unittest.TestCase):
         else:
             self.assertNotEqual(m, move)
 
+    def test_won(self):
+        cells, pl, move = STATE_WIN[0]
+        g = Game(Game.state_from_string(cells)).move(move, pl)
+        self.assertTrue(g.check_ended_after_move_from_colour(pl))
 
 
 
