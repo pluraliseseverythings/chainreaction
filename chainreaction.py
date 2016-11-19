@@ -2,18 +2,37 @@ import logging
 import sys
 import time
 
-HURRY_SECS = 4.916
-
-MGE = 50000
-RATIO_OF_DISCARDED_MOVES = 6
-CRISIS_GAME_RATIO = 4
-MAX_CASCADE_DEPTH = 22
-MAX_CASCADE_DEPTH_CRISIS = 16
+HURRY_SECS = 4.6
+MAX_CASCADE_DEPTH = 20
 
 FLOAT_INF = float("inf")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class Params():
+    def __init__(self, depth_params=(17.50611554443963, 1.1655381370580233, 0.6445185604940493), empties_threshold=15,
+                 h_initial=(3.123193887670585, 3.4715661184412934, 4.491375296479013),
+                 h_final=(3.2146052422469884, 2.37860043341507, 3.7537050479986105), hurried_penalty=0.379697170953):
+        self.h_final = h_final
+        self.h_initial = h_initial
+        self.empties_threshold = empties_threshold
+        self.depth_params = depth_params
+        self.hurried_penalty = hurried_penalty
+        self.id = 0
+
+    def __hash__(self):
+        return self.id
+
+    def __eq__(self, other):
+        return (self.id) == (other.id)
+
+    def __ne__(self, other):
+        return not (self == other)
+
+    def __str__(self):
+        return "{}: {}, {}, {}, {}, {}".format(self.id, self.h_final, self.h_initial, self.empties_threshold, self.depth_params, self.hurried_penalty)
 
 
 def memoize(f):
@@ -168,6 +187,10 @@ class Game():
         return [[(int(c[0]), int(c[1])) for c in r.split(" ")] for r in rows]
 
     @staticmethod
+    def game_from_string(state):
+        return Game(Game.state_from_string(state))
+
+    @staticmethod
     def position_from_string(position):
         return tuple([int(p) for p in position.strip().split(" ")])
 
@@ -193,20 +216,14 @@ class Game():
                     seen = True
         return False
 
-class Params():
-    def __init__(self, depth_params=(17.2117,0.898064, 0.016048), empties_threshold=15,
-                 h_initial = (3,3.5,4.5), h_final = (3,3,3)):
-        self.h_final = h_final
-        self.h_initial = h_initial
-        self.empties_threshold = empties_threshold
-        self.depth_params = depth_params
 
 class Player():
-    def __init__(self, colour, max_depth=None, max_games_explored=MGE):
+    def __init__(self, colour, parameters=None, max_depth=None, max_games_explored=50000, hs=HURRY_SECS):
         self.max_games_explored = max_games_explored
         self.colour = colour
         self.max_depth = max_depth
         self.complexity = None
+        self.hs = hs
         self.games_explored = 0
         self.games_pruned = 0
         self.winning_games = 0
@@ -214,6 +231,7 @@ class Player():
         self.empties = 0
         self.time_start = 0
         self.hurried_moves = 0
+        self.p = parameters if parameters else Params()
 
     def stats(self):
         return "ge:{}, gp:{}, wg:{}, md:{}, c:{}, cg:{}, hm:{}".format(self.games_explored, self.games_pruned,
@@ -221,26 +239,25 @@ class Player():
                                                                        self.complexity,
                                                                        self.crisis_games, self.hurried_moves)
 
-    def pick_move(self, state):
-        state = Game(state=state)
-        self.complexity = len(state.moves_for(self.colour))
-        for c, _ in state.iter_cells():
+    def pick_move(self, game):
+        self.complexity = len(game.moves_for(self.colour))
+        for c, _ in game.iter_cells():
             if c[0] == 0:
                 self.empties += 1
         if not self.max_depth:
             x = float(self.complexity)
+            k1, k2, k3 = self.p.depth_params
             self.max_depth = \
-                17.2117 - 0.898064 * x + 0.016048 * x * x
-            # 9.84173 - 0.429846 * x + 0.00952701 * x * x
+                k1 - k2 * x + k3 * (x ** 2)
 
         self.time_start = time.clock()
-        return self.minmax(state, 0)
+        return self.minmax(game, 0)
 
     def minmax(self, game, depth, alpha=-FLOAT_INF, beta=FLOAT_INF, is_max=True):
         self.games_explored += 1
         elapsed = (time.clock() - self.time_start)
         hurry_up = False
-        if elapsed > HURRY_SECS:
+        if elapsed > self.hs:
             hurry_up = True
         colour_here = self.colour_from_max(is_max)
         moves = game.moves_for(colour_here)
@@ -266,6 +283,7 @@ class Player():
                 break
             elif hurry_up or (depth_ >= self.max_depth) or self.games_explored > self.max_games_explored:
                 # We reached a limit, just using heuristicd here under new_game_score
+                new_game_score -= new_game_score * self.p.hurried_penalty
                 self.hurried_moves += 1
             else:
                 # Go down using the current alpha and beta
@@ -295,20 +313,15 @@ class Player():
 
     def heuristic(self, game):
         count_balls, count_edges_balls, count_corners_balls = game.count()
+        total_diff = (count_balls[self.colour] - count_balls[self.opponent_colour()])
+        edge_diff = (count_edges_balls[self.colour] - count_edges_balls[self.opponent_colour()])
+        corner_diff = (count_corners_balls[self.colour] - count_corners_balls[self.opponent_colour()])
         if self.empties > 15:
-            return 3 * (count_balls[self.colour] - count_balls[self.opponent_colour()]) \
-                   + 3.5 * (count_edges_balls[self.colour] - count_edges_balls[self.opponent_colour()]) \
-                   + 4.5 * (count_corners_balls[self.colour] - count_corners_balls[self.opponent_colour()])
+            k1, k2, k3 = self.p.h_initial
+            return k1 * total_diff + k2 * edge_diff + k3 * corner_diff
         else:
-            return 3 * (count_balls[self.colour] - count_balls[self.opponent_colour()])
-
-    def __heuristic(self, game):
-        score = 0
-        for g, (r, c) in game.iter_cells():
-            if g[0] != 0:
-                score += cell_score(c, g, r, self.colour, self.empties > 6)
-        print score
-        return score
+            k1, k2, k3 = self.p.h_final
+            return k1 * total_diff + k2 * edge_diff + k3 * corner_diff
 
     def opponent_colour(self):
         return 3 - self.colour
@@ -327,7 +340,7 @@ if __name__ == "__main__":
     game = Game(state)
     start_time = time.time()
     # cProfile.run('player.pick_move(state)', sort=1)
-    score, move = player.pick_move(state)
+    score, move = player.pick_move(game)
     print(str(move[0]) + " " + str(move[1]))
     print(player.stats())
     print(score)

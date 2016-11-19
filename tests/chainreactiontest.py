@@ -20,19 +20,6 @@ STATE_3 = "00 00 00 00 00\n" \
           "00 00 00 23 12\n" \
           "00 00 00 21 11"
 
-STATE_4 = "00 00 00 00 00\n" \
-          "00 00 00 00 00\n" \
-          "00 00 00 00 00\n" \
-          "00 00 00 00 22\n" \
-          "21 00 11 22 00"
-
-STATE_5 = "00 00 00 00 11 \n" \
-          "00 21 00 00 00 \n" \
-          "11 00 00 00 00 \n" \
-          "00 00 00 00 22 \n" \
-          "21 00 11 22 00"
-
-#WHY SO SLOW?
 STATE_6 = "00 21 12 12 11\n" \
           "21 23 12 13 00\n" \
           "22 00 21 12 12\n" \
@@ -43,8 +30,8 @@ STATE_WUT = "00 12 11 12 11\n11 12 13 00 12\n11 13 13 11 12\n21 00 22 13 00\n21 
 
 STATE_WIN = [("11 12 12 12 00\n12 11 13 12 12\n11 00 13 00 12\n11 13 13 12 22\n11 11 12 12 11", 2, (3, 4))]
 
-STATES = [("11 11 22 00 21\n11 23 00 21 11\n11 00 21 00 12\n11 00 23 00 00\n11 00 00 11 21", 1, (2, 1), True),
-          ("00 12 11 22 21\n11 13 13 11 22\n11 00 00 00 00\n21 00 00 00 22\n21 22 22 22 21", 1, (2, 1), True)]
+STATES = [("11 11 22 00 21\n11 23 00 21 11\n11 00 21 00 12\n11 00 23 00 00\n11 00 00 11 21", 1, (1, 2), True),
+          ("00 12 11 22 21\n11 13 13 11 22\n11 00 00 00 00\n21 00 00 00 22\n21 22 22 22 21", 1, (1, 1), True)]
 
 
 EMPTY_INPUT = "00 00 00 00 00\n" \
@@ -78,24 +65,24 @@ class GameTest(unittest.TestCase):
 
     OPPONENT = 2
 
-    def test_state_from_string(self):
+    def test_game_from_string(self):
         self.assertEqual(Game.state_from_string(GameTest.INPUT),
-                         [[[0, 0], [0, 0], [0, 0], [2, 1], [0, 0]],
-                          [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
-                          [[0, 0], [0, 0], [1, 3], [1, 3], [2, 1]],
-                          [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
-                          [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]])
+                         [[(0, 0), (0, 0), (0, 0), (2, 1), (0, 0)],
+                          [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+                          [(0, 0), (0, 0), (1, 3), (1, 3), (2, 1)],
+                          [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+                          [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]])
 
     def test_game_won(self):
         game = Game(state=Game.state_from_string(GameTest.WON))
-        self.assertTrue(game.check_ended(1))
+        self.assertTrue(game.check_ended_after_move_from_colour(1))
         game = Game(state=Game.state_from_string(GameTest.INPUT))
-        self.assertFalse(game.check_ended(1))
+        self.assertFalse(game.check_ended_after_move_from_colour(1))
         game = Game(state=Game.state_from_string(EMPTY_INPUT))
-        self.assertFalse(game.check_ended(1))
+        self.assertFalse(game.check_ended_after_move_from_colour(1))
 
     def test_position_from_string(self):
-        self.assertEqual(Game.position_from_string(GameTest.MOVE), [2, 2])
+        self.assertEqual(Game.position_from_string(GameTest.MOVE), (2, 2))
 
     def test_move(self):
         game = Game(state=Game.state_from_string(GameTest.INPUT))
@@ -112,11 +99,11 @@ class GameTest(unittest.TestCase):
     def test_moves_for(self):
         game = Game(state=Game.state_from_string(GameTest.INPUT))
         self.assertEquals(game.moves_for(GameTest.COLOUR),
-                          [[0, 0], [0, 1], [0, 2],         [0, 4],
-                           [1, 0], [1, 1], [1, 2], [1, 3], [1, 4],
-                           [2, 0], [2, 1], [2, 2], [2, 3],
-                           [3, 0], [3, 1], [3, 2], [3, 3], [3, 4],
-                           [4, 0], [4, 1], [4, 2], [4, 3], [4, 4]])
+                          [(0, 0), (0, 1), (0, 2),         (0, 4),
+                           (1, 0), (1, 1), (1, 2), (1, 3), (1, 4),
+                           (2, 0), (2, 1), (2, 2), (2, 3),
+                           (3, 0), (3, 1), (3, 2), (3, 3), (3, 4),
+                           (4, 0), (4, 1), (4, 2), (4, 3), (4, 4)])
         self.assertEquals(len(game.moves_for(GameTest.OPPONENT)), 23)
         game = Game(state=Game.state_from_string(GameTest.EXPEC))
         self.assertEquals(len(game.moves_for(GameTest.COLOUR)), 24)
@@ -139,39 +126,23 @@ class GameTest(unittest.TestCase):
 class PlayerTest(unittest.TestCase):
     def test_pick_move(self):
         p = Player(GameTest.COLOUR)
-        m = p.pick_move(Game.state_from_string(GameTest.INPUT))
-        self.assertEqual(m, [3,0])
+        m = p.pick_move(Game.game_from_string(GameTest.INPUT))
+        self.assertEqual(m[1], (2,2))
 
     def test_pick_move_empty(self):
         p = Player(GameTest.COLOUR)
-        m = p.pick_move(Game.state_from_string(EMPTY_INPUT))
-        self.assertEqual(m, [0,0])
+        m = p.pick_move(Game.game_from_string(EMPTY_INPUT))
+        self.assertEqual(m[1], (0,0))
 
     def test_pick_move_2(self):
         p = Player(1)
-        m = p.pick_move(Game.state_from_string(STATE_2))
-        self.assertEqual(m, (-8, [0, 2]))
+        m = p.pick_move(Game.game_from_string(STATE_2))
+        self.assertEqual(m[1], (2,3))
 
     def test_pick_move_3(self):
         p = Player(1)
-        m = p.pick_move(Game.state_from_string(STATE_3))
-        self.assertEqual(m, (float("inf"), [4,4]))
-
-    def test_pick_move_4(self):
-        p = Player(1)
-        m = p.pick_move(Game.state_from_string(STATE_4))
-        self.assertEqual(m, (float("inf"), [4,4]))
-
-    def test_pick_move_5(self):
-        p = Player(1, max_depth=1)
-        m = p.pick_move(Game.state_from_string(STATE_5))
-        self.assertEqual(m, (-3, [4, 2]))
-
-    def test_pick_move_6(self):
-        p = Player(1, max_depth=6, max_games_explored=5000)
-        cProfile.runctx('p.pick_move(Game.state_from_string(STATE_6))', {'Game':Game, 'STATE_6':STATE_6, 'p':p}, {}, sort=1)
-        m = p.pick_move(Game.state_from_string(STATE_6))
-        self.assertEqual(m, (-3, [4, 2]))
+        m = p.pick_move(Game.game_from_string(STATE_3))
+        self.assertEqual(m[0], (float("inf")))
 
     def test_pick_move_s0(self):
         cells, pl, move, win = STATES[0]
@@ -183,7 +154,7 @@ class PlayerTest(unittest.TestCase):
 
     def r(self, cells, move, pl, win):
         p = Player(pl)
-        s, m = p.pick_move(Game.state_from_string(cells))
+        s, m = p.pick_move(Game.game_from_string(cells))
         print m
         if win:
             self.assertEqual(m, move)
